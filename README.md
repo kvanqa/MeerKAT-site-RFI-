@@ -9,7 +9,7 @@ azimuthal angle.
 MeerKAT archive visibility data is going to be used for this study. The rdb data files in the archive will be analyzed.
 Katdal library is used to open the H5 files produced by MeerKAT telescope, katdal is the data access library.
 
-## Requirment
+## Requirments
 
 - Numpy
 - Katdal
