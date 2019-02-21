@@ -66,14 +66,15 @@ def select_and_apply_with_good_ants(litevis,fullvis,flagfile, pol_to_use, corrpr
     Output : The flag table with ingest rfi flags and cal rfi flags
     '''
     
-    litevis.select(corrprods = corrprod, pol = pol_to_use, scans = scan,ants = clean_ants)
-    fullvis.select(corrprods = corrprod, pol = pol_to_use, scans = scan,ants = clean_ants)
-    
     
     flags = da.from_array(flagfile['flags'], chunks=(1, 342, litevis.shape[2]))
+    
     litevis.source.data.flags = flags
-
+    
+    litevis.select(corrprods = corrprod, pol = pol_to_use, scans = scan,ants = clean_ants,flags=['cal_rfi','ingest_rfi'])
+    fullvis.select(corrprods = corrprod, pol = pol_to_use, scans = scan,ants = clean_ants,flags=['cal_rfi','ingest_rfi'])
     flag = litevis.flags[:, :, :]
+    
     return flag
 
 
@@ -118,7 +119,7 @@ def get_time_idx(litevis):
     return np.array(hour)[None,:]
 
 
-def get_az_idx(az,bins):
+def get_az_idx(azimuth,bins):
     '''
     This function is going get the index of the azimuth 
     
@@ -127,7 +128,7 @@ def get_az_idx(az,bins):
     Output : Azimuthal index
     '''
     az_idx = []
-    for az in az:
+    for az in azimuth:
         for j in range(len(bins)-1):
             if bins[j] <= az < bins[j+1]:
                 az_idx.append(j)
@@ -135,7 +136,7 @@ def get_az_idx(az,bins):
     return np.array(az_idx)[None,:]
 
 
-def get_el_idx(el,bins):
+def get_el_idx(elevation,bins):
     '''
     This function is going get the index of the elevation
     
@@ -145,7 +146,7 @@ def get_el_idx(el,bins):
     
     '''
     el_idx = []
-    for el in el:
+    for el in elevation:
         for j in range(len(bins)-1):
             if bins[j] <= el < bins[j+1]:
                 el_idx.append(j+1)
@@ -236,8 +237,9 @@ if __name__=='__main__':
    
 
     flag,l,f = get_files('/scratch2/isaac/rfi_data/3calImaging/flags','/scratch2/isaac/rfi_data/3calImaging','/scratch2/isaac/rfi_data/3calImagingfull')
+    #flag,l,f = ['1532811076_sdp_l0_flags.h5'],['1532811076_sdp_l0.rdb'], ['1532811076_sdp_l0.full.rdb']
     #Initializing the master array and the weghting
-    master = np.zeros((24,4096,2016,10,24),dtype=np.uint16)
+    master =np.zeros((24,4096,2016,10,24),dtype=np.uint16)
     counter = np.zeros((24,4096,2016,10,24),dtype=np.uint16)
     badfiles = []
     goodfiles = []
@@ -266,15 +268,15 @@ if __name__=='__main__':
             master[time_idx,:,bl_idx,el_idx,az_idx] += np.transpose(good_flags, axes=[2,0,1])
             counter[time_idx,:,bl_idx,el_idx,az_idx] += 1
             print 'Master array has been updated'
-
-            np.save('/scratch2/isaac/rfi_data/master_offline_flag.npy',master)
-            np.save('/scratch2/isaac/rfi_data/counter_offline_flag.npy',counter)
             goodfiles.append(f[i])
+           
         except Exception as e: 
             print(e)
             print f[i],'file has a problem'
             badfiles.append(f[i])
             pass
-
-    np.save('/scratch2/isaac/rfi_data/badfiles_offline_flag.npy',badfiles)
-    np.save('/scratch2/isaac/rfi_data/goodfiles_offline_flag.npy',goodfiles)
+        
+    np.save('/scratch2/isaac/rfi_data/master_ingest+cal_rfi.npy',master)
+    np.save('/scratch2/isaac/rfi_data/counter_ingest+cal_rfi.npy',counter)
+    np.save('/scratch2/isaac/rfi_data/badfiles_ingest+cal_rfi.npy',badfiles)
+    np.save('/scratch2/isaac/rfi_data/goodfiles_ingest+cal_rfi.npy',goodfiles)
