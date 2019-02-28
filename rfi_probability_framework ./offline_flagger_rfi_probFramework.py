@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 # coding: utf-8
-
-
 import katdal
 import h5py
 import numpy as np
@@ -10,20 +8,23 @@ import xarray as xr
 import pandas as pd
 import pylab as plt
 import time as tme
+from dask import array as da
+from dask import delayed
+from numba import jit, prange
 
 
 
-def readfile(pathlitevis,pathfullvis,pathflag):
+def readfile(pathfullvis, pathflag):
     '''
-    Reading in the both the lite and full visibility file, and also the flag file.
+    Reading in the full visibility file, and also the flag file.
     
-    Arg : path2lite, path2full and path to the flag file
+    Arg : path2full and path to the flag file
     '''
-    vislite = katdal.open(pathlitevis)
     visfull = katdal.open(pathfullvis)
-    flagfile =h5py.File(pathflag)
+    print('File has been read')
+    flagfile = h5py.File(pathflag)
     
-    return vislite,visfull,flagfile
+    return visfull, flagfile
 
 
 
@@ -55,7 +56,7 @@ def remove_bad_ants(fullvis):
 
 
 
-def select_and_apply_with_good_ants(litevis,fullvis,flagfile, pol_to_use, corrprod,scan,clean_ants):
+def select_and_apply_with_good_ants(fullvis,flagfile, pol_to_use, corrprod,scan,clean_ants):
     from dask import array as da
     '''
     This function is going to select correlation products and apply flag table
@@ -66,14 +67,15 @@ def select_and_apply_with_good_ants(litevis,fullvis,flagfile, pol_to_use, corrpr
     Output : The flag table with ingest rfi flags and cal rfi flags
     '''
     
+    fullvis.select(reset='TFB')
+    flags = da.from_array(flagfile['flags'], chunks=(1, 342, fullvis.shape[2]))
     
-    flags = da.from_array(flagfile['flags'], chunks=(1, 342, litevis.shape[2]))
+    fullvis.source.data.flags = flags
     
-    litevis.source.data.flags = flags
-    
-    litevis.select(corrprods = corrprod, pol = pol_to_use, scans = scan,ants = clean_ants,flags=['cal_rfi','ingest_rfi'])
-    fullvis.select(corrprods = corrprod, pol = pol_to_use, scans = scan,ants = clean_ants,flags=['cal_rfi','ingest_rfi'])
-    flag = litevis.flags[:, :, :]
+    fullvis.select(corrprods=corrprod, pol=pol_to_use, scans=scan,ants = clean_ants,flags=['cal_rfi','ingest_rfi'])
+
+    flag =da.from_array(fullvis.flags[:, :, :],chunks='auto')  
+  
     
     return flag
 
@@ -88,16 +90,17 @@ def get_az_and_el(fullvis):
     '''
     
     # Getting the azmuth and elevation
-    az = fullvis.az
-    el = fullvis.el
+
+    azmean = np.mean(fullvis.az, axis=1)%360
+    elmean = np.mean(fullvis.el, axis=1)
     
-    azmean = (np.array([np.mean(az[:][i]) for i in range(az.shape[0])])).astype(int)
-    elmean = (np.array([np.mean(el[:][i]) for i in range(el.shape[0])])).astype(int)
+#     azmean = (np.array([np.mean(az[:][i]) for i in range(az.shape[0])])).astype(int)
+#     elmean = (np.array([np.mean(el[:][i]) for i in range(el.shape[0])])).astype(int)
     
-    return elmean,azmean
+    return elmean, azmean
 
 
-def get_time_idx(litevis):
+def get_time_idx(fullvis):
     import datetime
     '''
     This function is going to convert unix time to hour of a day
@@ -106,7 +109,7 @@ def get_time_idx(litevis):
     
     Output : list with time dumps converted to hour of a day
     '''
-    unix  = litevis.timestamps
+    unix  = fullvis.timestamps
 
     local_time = []
     for i in range(len(unix)):
@@ -116,7 +119,7 @@ def get_time_idx(litevis):
     hour = []
     for i in range(len(local_time)):
         hour.append(int(round(int(local_time[i][:2]) + int(local_time[i][3:5])/60 + float(local_time[i][-2:])/3600)))
-    return np.array(hour)[None,:]
+    return np.array(hour, dtype=np.int32)
 
 
 def get_az_idx(azimuth,bins):
@@ -133,7 +136,7 @@ def get_az_idx(azimuth,bins):
             if bins[j] <= az < bins[j+1]:
                 az_idx.append(j)
     
-    return np.array(az_idx)[None,:]
+    return np.array(az_idx)#, dtype=np.int32)
 
 
 def get_el_idx(elevation,bins):
@@ -146,16 +149,17 @@ def get_el_idx(elevation,bins):
     
     '''
     el_idx = []
+
     for el in elevation:
-        for j in range(len(bins)-1):
-            if bins[j] <= el < bins[j+1]:
-                el_idx.append(j+1)
+        for j in range(len(bins)):
+            if bins[j] <= el < bins[j]+10:
+                el_idx.append(j)
     
-    return np.array(el_idx)[None,:] 
+    return np.array(el_idx, dtype=np.int32)
 
 
 
-def get_corrprods(litevis):
+def get_corrprods(fullvis):
     '''
     This function is getting the corr products
     
@@ -163,7 +167,7 @@ def get_corrprods(litevis):
     
     Output : Correlation products
     '''
-    bl = litevis.corr_products
+    bl = fullvis.corr_products
     bl_idx = []
     for i in range(len(bl)):
         bl_idx.append((bl[i][0][0:-1]+bl[i][1][0:-1]))
@@ -180,103 +184,149 @@ def get_bl_idx(corr_prods,nant):
     Output : Baseline index
     '''
     nant = nant
-    A1, A2 = np.empty(nant*(nant-1)/2, dtype=np.int32), np.empty(nant*(nant-1)/2, dtype=np.int32)
-    k = 0
-    for i in range(nant):
-        for j in range(i+1,nant):
-            A1[k] = i
-            A2[k] = j
-            k += 1
+
+    A1, A2 = np.triu_indices(nant, 1)
 
     # Baseline antenna cobinations
     corr_products = np.array(['m{:03d}m{:03d}'.format(A1[i], A2[i]) for i in range(len(A1))])
     
-    # Number of baselines
-    nbl = (nant**2 - nant)/2
 
 
-    df = pd.DataFrame(data=np.arange(nbl), index=corr_products).T
+
+    df = pd.DataFrame(data=np.arange(len(A1)), index=corr_products).T
     
-    bl_idx = df[corr_prods].values
-    return (bl_idx[0])[:,None]
+    bl_idx = df[corr_prods].values[0].astype(np.int32)
+    
+    return bl_idx
+
+def get_files(path2flags, path2full):
+    '''
+    This file is going to get the list of datafiles[flag files, lite visitibility and full visibility]
+    
+    Input: path to: flagfiles, litevis and fullvis
+    
+    Ouput: List of flagfiles, litevis and fullvis names.
+    '''
+    path = [path2flags, path2full]
+    import os, fnmatch
+    listOfflags = os.listdir(path[0])  
+    
+    listOffull = os.listdir(path[1]) 
+    
+    patternflags = "*.h5"   
+    patternfull = "*.rdb" 
+    dataflags = []
+    datafull =[]
+    for entry in listOffull:  
+        datafull.append(entry[0:10])
+    for entry in listOfflags:  
+         if fnmatch.fnmatch(entry,patternflags):
+            dataflags.append(entry[0:10])
+            
+    data = list(set(datafull).intersection(set(dataflags)))
+    
+    fullvis = []
+    flags = []
+    for i in range(len(data)):
+        fullvis.append(data[i]+'_sdp_l0.full.rdb')
+        flags.append(data[i]+'_sdp_l0_flags.h5')
+    
+    return flags,fullvis
+
+@jit(nopython=True, parallel=True)
+def update_arrays(Time_idx, Bl_idx, El_idx, Az_idx, Good_flags, Master, Counter):
+    '''
+    This function is gonna update the master and counter array
+    
+    Input: time_idx, bl_idx, el_idx, az_idx, flags_array, master and counter arrays
+    
+    Output: update master and counter array
+    '''
+
+    print('start to update master array')
+    for k in prange(4096):
+        for i in prange(len(Bl_idx)):
+            for j in range(len(Time_idx)):
+                Master[Time_idx[j],k,Bl_idx[i],El_idx[j],Az_idx[j]] += Good_flags[i,j,k]
+                Counter[Time_idx[j],k,Bl_idx[i],El_idx[j],Az_idx[j]] += 1
+                
+    print('Master array has been updated')
+            
+    return Master, Counter
+
+
 
 if __name__=='__main__':
-    def get_files(path2flags,path2lite,path2full):
-        path = [path2flags,path2lite,path2full]
-        import os, fnmatch
-        listOfflags = os.listdir(path[0]) 
-        listOflite= os.listdir(path[1])  
-        listOffull = os.listdir(path[2])
-        patternflags = "*.h5"  
-        patternlite = "*.rdb" 
-        patternfull = "*.rdb" 
-        dataflags = []
-        datalite = []
-        datafull =[]
-        for entry in listOfflags:  
-             if fnmatch.fnmatch(entry,patternflags):
-                dataflags.append(entry[0:10])
-        for entry in listOflite:  
-             if fnmatch.fnmatch(entry, patternlite):
-                datalite.append(entry[0:10])
-        for entry in listOffull:  
-             if fnmatch.fnmatch(entry, patternfull):
-                datafull.append(entry[0:10])
-        vis = list(set(datalite).intersection(set(datafull)))
-        data = list(set(dataflags).intersection(set(vis)))
-
-        litevis = []
-        fullvis = []
-        flags = []
-        for i in range(len(data)):
-            litevis.append(data[i]+'_sdp_l0.rdb')
-            fullvis.append(data[i]+'_sdp_l0.full.rdb')
-            flags.append(data[i]+'_sdp_l0_flags.h5')
-        
-        return flags,litevis,fullvis
+    
+    #Getting the file names
+    flag,f = get_files('/scratch2/isaac/rfi_data/3calImaging/flags', '/scratch2/isaac/rfi_data/goodfiles/')
+    #flag,f = ['1532725253_sdp_l0_flags.h5'], ['1532725253_sdp_l0.full.rdb']
    
-
-    flag,l,f = get_files('/scratch2/isaac/rfi_data/3calImaging/flags','/scratch2/isaac/rfi_data/3calImaging','/scratch2/isaac/rfi_data/3calImagingfull')
-    #flag,l,f = ['1532811076_sdp_l0_flags.h5'],['1532811076_sdp_l0.rdb'], ['1532811076_sdp_l0.full.rdb']
     #Initializing the master array and the weghting
-    master =np.zeros((24,4096,2016,10,24),dtype=np.uint16)
-    counter = np.zeros((24,4096,2016,10,24),dtype=np.uint16)
+    master = np.zeros((24,4096,2016,8,24), dtype=np.uint16) 
+    counter =np.zeros((24,4096,2016,8,24), dtype=np.uint16) 
+ 
+    # Running the Hp code
     badfiles = []
     goodfiles = []
+    
     for i in range(len(f)):
+        print('Adding file {} : {}'.format(i, f[i]))
         try:
-            print 'Adding file number ', i
-            pathlitevis='/scratch2/isaac/rfi_data/3calImaging/'+l[i]
-            pathfullvis='/scratch2/isaac/rfi_data/3calImagingfull/'+f[i]
+            pathfullvis='/scratch2/isaac/rfi_data/goodfiles/'+f[i]
             pathflag = '/scratch2/isaac/rfi_data/3calImaging/flags/'+flag[i]
-            litevis,fullvis,flagfile = readfile(pathlitevis,pathfullvis,pathflag)
-            print 'File ',i,'has been read'
+            fullvis, flagfile = readfile(pathfullvis, pathflag)
+            print('File ',i,'has been read')
+        except:
+              pass
+        
+        
+        if len(fullvis.freqs) == 4096:
             clean_ants = remove_bad_ants(fullvis)
-            print 'good ants'
-            good_flags = select_and_apply_with_good_ants(litevis,fullvis,flagfile,pol_to_use = 'HH',corrprod='cross',scan='track',
-                                                        clean_ants = clean_ants)
-            print 'Good flags'
-            el,az = get_az_and_el(fullvis)
-            time_idx = get_time_idx(litevis)
-            az_idx = get_az_idx(az,np.arange(0,370,15))
-            el_idx = get_el_idx(el,np.arange(0,100,10))
-            print 'el and az extracted'
-            corr_prods = get_corrprods(litevis)
-            bl_idx= get_bl_idx(corr_prods,nant=64)
-            print 'start to update master array' 
-            # Updating the array
-            master[time_idx,:,bl_idx,el_idx,az_idx] += np.transpose(good_flags, axes=[2,0,1])
-            counter[time_idx,:,bl_idx,el_idx,az_idx] += 1
-            print 'Master array has been updated'
-            goodfiles.append(f[i])
-           
-        except Exception as e: 
-            print(e)
-            print f[i],'file has a problem'
+            print('good ants')
+            good_flags = select_and_apply_with_good_ants(fullvis, flagfile, pol_to_use='HH', corrprod='cross', scan='track', 
+                                                         clean_ants=clean_ants).astype(int)
+          
+            if good_flags.shape[0]* good_flags.shape[1]* good_flags.shape[2]!= 0:
+                
+                good_flags = np.transpose(good_flags, axes=[2,0,1])
+                good_flags = good_flags.compute()
+                print('Good flags')
+                el,az = get_az_and_el(fullvis)
+                time_idx = get_time_idx(fullvis)
+                az_idx = get_az_idx(az,np.arange(0,370,15))
+                el_idx = get_el_idx(el,np.arange(10,90,10))
+                print('el and az extracted')
+                corr_prods = get_corrprods(fullvis)
+                bl_idx = get_bl_idx(corr_prods, nant=64)
+                # Updating the array
+                s = tme.time()
+     
+                master, counter = update_arrays(time_idx, bl_idx, el_idx, az_idx, good_flags, master, counter)
+
+                print(tme.time() - s)
+                goodfiles.append(f[i])
+                
+            else:
+                print(f[i],'selection has a problem')
+                badfiles.append(f[i])
+                pass
+             
+                   
+        else:
+            print(f[i],'channel has a problem')
             badfiles.append(f[i])
             pass
         
-    np.save('/scratch2/isaac/rfi_data/master_ingest+cal_rfi.npy',master)
-    np.save('/scratch2/isaac/rfi_data/counter_ingest+cal_rfi.npy',counter)
-    np.save('/scratch2/isaac/rfi_data/badfiles_ingest+cal_rfi.npy',badfiles)
-    np.save('/scratch2/isaac/rfi_data/goodfiles_ingest+cal_rfi.npy',goodfiles)
+        
+        if i%10==0 and i!=0:
+        
+            ds = xr.Dataset({'master': (('time','frequency','baseline','elevation','azimuth') , master),
+                             'counter': (('time','frequency','baseline','elevation','azimuth'), counter)},
+                            {'time': np.arange(24),'frequency':fullvis.freqs,'baseline':np.arange(2016),
+                             'elevation':np.linspace(10,80,8),'azimuth':np.arange(0,360,15)})
+
+            ds.to_zarr('/scratch2/isaac/rfi_data/probzarr_ingest+cal_numba+dask_flags.zarr','w')
+            np.save('/home/isaac/good_files_numba+dask.npy',goodfiles)
+            np.save('/home/isaac/bad_files_numba+dask.npy',badfiles)
+       
