@@ -1,4 +1,4 @@
-# MeerKAT HP RFI
+# MeerKAT HP of RFI
 
 The project is aimed to statistical analyze the RFI eniviroment for MeerKAT telescope using RFI flags produced by cal and 
 ingest rfi  pipeline. The probability of RFI occurrence will be computed as a function of frequency, time, baseline, elevation and azimuthal angle.
@@ -15,3 +15,4 @@ Katdal library is used to open and manipualte the rdb files produced by MeerKAT 
 - Pandas
 - Dask
 - Xarrays
+- Numba
