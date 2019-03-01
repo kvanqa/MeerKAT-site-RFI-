@@ -1,4 +1,4 @@
-# Statistical Analysis of Radio Frequency Interference Environment  for MeerKAT Telescope in the L-band Spectrum
+# MeerKAT HP RFI
 
 The project is aimed to statistical analyze the RFI eniviroment for MeerKAT telescope using RFI flags produced by cal and 
 ingest rfi  pipeline. The probability of RFI occurrence will be computed as a function of frequency, time, baseline, elevation and azimuthal angle.
