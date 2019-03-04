@@ -8,4 +8,4 @@ setup(name='kathprfi',
       author_email='isihlangu@ska.ac.za',
       license='SARAO',
       packages=['kathprfi'],
-      zip_safe=False)
+zip_safe=False)
