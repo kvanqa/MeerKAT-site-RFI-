@@ -22,8 +22,8 @@ def readfile(pathfullvis, pathflag):
     
     Arg : path2full and path to the flag file
     '''
+   
     visfull = katdal.open(pathfullvis)
-    print('File has been read')
     flagfile = h5py.File(pathflag)
     
     return visfull, flagfile
@@ -272,11 +272,13 @@ if __name__=='__main__':
                         '--bad', action='store',  type=str,
                     help='Path to save list of bad files')
     parser.add_argument('-g',
-                        '--good', action='store', type=str,
+                        '--good', action='store', type=str,default = '\tmp',
                     help='Path to save bad files')
     parser.add_argument('-z',
-                        '--zarr', action='store', type=str,
+                        '--zarr', action='store', type=str,default = '\tmp',
                     help='path to save output zarr file')
+    parser.add_argument('-n','--no_of_files', action = 'store', type=int,
+                        help='Multiple of number of files to save a number between 1 and 10',default=1 )
     
     args = parser.parse_args()
 
@@ -293,16 +295,17 @@ if __name__=='__main__':
     badfiles = []
     goodfiles = []
     
-    for i in range(len(f)):
+    for i in range(0,1):
         print('Adding file {} : {}'.format(i, f[i]))
         try:
             pathfullvis=str(args.vis)+'/'+f[i]
-            pathflag = str(args.flags)+'/'+flag[i]
-            fullvis, flagfile = readfile(pathfullvis, pathflag)
+            pathflag = str(args.flags)+flag[i]
+            fullvis,flagfile = readfile(pathfullvis, pathflag)
             print('File ',i,'has been read')
-        except:
-              pass
-        
+        except Exception as e:
+            print e
+            pass
+     
         
         if len(fullvis.freqs) == 4096:
             clean_ants = remove_bad_ants(fullvis)
@@ -347,14 +350,14 @@ if __name__=='__main__':
             pass
         
         
-        if i%10==0 and i!=0:
+        if i%args.no_of_files==0 and i!=0:
         
-            ds = xr.Dataset({'master': (('time','frequency','baseline','elevation','azimuth') , master),
-                             'counter': (('time','frequency','baseline','elevation','azimuth'), counter)},
-                            {'time': np.arange(24),'frequency':fullvis.freqs,'baseline':np.arange(2016),
-                             'elevation':np.linspace(10,80,8),'azimuth':np.arange(0,360,15)})
+        ds = xr.Dataset({'master': (('time','frequency','baseline','elevation','azimuth') , master),
+                         'counter': (('time','frequency','baseline','elevation','azimuth'), counter)},
+                        {'time': np.arange(24),'frequency':fullvis.freqs,'baseline':np.arange(2016),
+                         'elevation':np.linspace(10,80,8),'azimuth':np.arange(0,360,15)})
 
-            ds.to_zarr(args.zarr,'w')
-            np.save(args.good,goodfiles)
-            np.save(args.bad,badfiles)
+        ds.to_zarr(args.zarr,'w')
+        np.save(args.good,goodfiles)
+        np.save(args.bad,badfiles)
        
