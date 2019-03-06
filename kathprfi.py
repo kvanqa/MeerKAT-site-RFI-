@@ -352,12 +352,12 @@ if __name__=='__main__':
         
         if i%args.no_of_files==0 and i!=0:
         
-        ds = xr.Dataset({'master': (('time','frequency','baseline','elevation','azimuth') , master),
-                         'counter': (('time','frequency','baseline','elevation','azimuth'), counter)},
-                        {'time': np.arange(24),'frequency':fullvis.freqs,'baseline':np.arange(2016),
-                         'elevation':np.linspace(10,80,8),'azimuth':np.arange(0,360,15)})
+            ds = xr.Dataset({'master': (('time','frequency','baseline','elevation','azimuth') , master),
+                             'counter': (('time','frequency','baseline','elevation','azimuth'), counter)},
+                            {'time': np.arange(24),'frequency':fullvis.freqs,'baseline':np.arange(2016),
+                             'elevation':np.linspace(10,80,8),'azimuth':np.arange(0,360,15)})
 
-        ds.to_zarr(args.zarr,'w')
-        np.save(args.good,goodfiles)
-        np.save(args.bad,badfiles)
-       
+            ds.to_zarr(args.zarr,'w')
+            np.save(args.good,goodfiles)
+            np.save(args.bad,badfiles)
+
