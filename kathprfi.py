@@ -22,9 +22,13 @@ def readfile(pathfullvis, pathflag):
     
     Arg : path2full and path to the flag file
     '''
-   
+    
     visfull = katdal.open(pathfullvis)
+   
     flagfile = h5py.File(pathflag)
+    
+    #da.from_array(flagfile['flags'], chunks='auto')
+   
     
     return visfull, flagfile
 
@@ -258,7 +262,7 @@ def update_arrays(Time_idx, Bl_idx, El_idx, Az_idx, Good_flags, Master, Counter)
 
 
 
-if __name__=='__main__':
+if __name__=="__main__":
     parser = argparse.ArgumentParser(description='This package produces two 5-D arrays, which are the counter array and the master array. The arrays provides statistics about measured RFI from MeerKAT telescope.',)
    
     parser.add_argument('-v',
@@ -295,18 +299,17 @@ if __name__=='__main__':
     badfiles = []
     goodfiles = []
     
-    for i in range(0,1):
+    for i in range(len(f)):
         print('Adding file {} : {}'.format(i, f[i]))
         try:
             pathfullvis=str(args.vis)+'/'+f[i]
             pathflag = str(args.flags)+flag[i]
-            fullvis,flagfile = readfile(pathfullvis, pathflag)
+            fullvis,flagfile = readfile(pathfullvis,pathflag)
             print('File ',i,'has been read')
         except Exception as e:
             print e
-            pass
+            continue
      
-        
         if len(fullvis.freqs) == 4096:
             clean_ants = remove_bad_ants(fullvis)
             print('good ants')
@@ -350,7 +353,7 @@ if __name__=='__main__':
             pass
         
         
-        if i%args.no_of_files==0 and i!=0:
+        if i%args.no_of_files==0:
         
             ds = xr.Dataset({'master': (('time','frequency','baseline','elevation','azimuth') , master),
                              'counter': (('time','frequency','baseline','elevation','azimuth'), counter)},
@@ -360,4 +363,5 @@ if __name__=='__main__':
             ds.to_zarr(args.zarr,'w')
             np.save(args.good,goodfiles)
             np.save(args.bad,badfiles)
+            print('File has been saved')
 
