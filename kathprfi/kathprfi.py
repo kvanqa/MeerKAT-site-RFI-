@@ -12,6 +12,7 @@ from dask import array as da
 from dask import delayed
 from numba import jit, prange
 import argparse,os
+import six
 
 
 
@@ -21,9 +22,13 @@ def readfile(pathfullvis, pathflag):
     
     Arg : path2full and path to the flag file
     '''
+    
     visfull = katdal.open(pathfullvis)
-    print('File has been read')
+   
     flagfile = h5py.File(pathflag)
+    
+    #da.from_array(flagfile['flags'], chunks='auto')
+   
     
     return visfull, flagfile
 
@@ -75,7 +80,7 @@ def select_and_apply_with_good_ants(fullvis,flagfile, pol_to_use, corrprod,scan,
     
     fullvis.select(corrprods=corrprod, pol=pol_to_use, scans=scan,ants = clean_ants,flags=['cal_rfi','ingest_rfi'])
 
-    flag =da.from_array(fullvis.flags[:, :, :],chunks='auto')  
+    flag =fullvis.flags  
   
     
     return flag
@@ -117,7 +122,12 @@ def get_time_idx(fullvis):
     # Converting time to hour of a day
     hour = []
     for i in range(len(local_time)):
-        hour.append(int(round(int(local_time[i][:2]) + int(local_time[i][3:5])/60 + float(local_time[i][-2:])/3600)))
+        h = int(round(int(local_time[i][:2]) + int(local_time[i][3:5])/60 + float(local_time[i][-2:])/3600))
+        if h == 24:
+            hour.append(0)
+        else:
+            hour.append(h)
+
     return np.array(hour, dtype=np.int32)
 
 
@@ -135,7 +145,7 @@ def get_az_idx(azimuth,bins):
             if bins[j] <= az < bins[j+1]:
                 az_idx.append(j)
     
-    return np.array(az_idx)#, dtype=np.int32)
+    return np.array(az_idx)
 
 
 def get_el_idx(elevation,bins):
@@ -232,31 +242,38 @@ def get_files(path2flags, path2full):
     
     return flags,fullvis
 
-@jit(nopython=True, parallel=True)
+from numba import cuda
+
+@jit(nopython=True, parallel=True, debug=True)
 def update_arrays(Time_idx, Bl_idx, El_idx, Az_idx, Good_flags, Master, Counter):
     '''
+from numba import cuda
+
+@jit(nopython=True, parallel=True, debug=True)
     This function is gonna update the master and counter array
     
     Input: time_idx, bl_idx, el_idx, az_idx, flags_array, master and counter arrays
     
     Output: update master and counter array
     '''
-
-    print('start to update master array')
-    for k in prange(4096):
-        for i in prange(len(Bl_idx)):
-            for j in range(len(Time_idx)):
-                Master[Time_idx[j],k,Bl_idx[i],El_idx[j],Az_idx[j]] += Good_flags[i,j,k]
-                Counter[Time_idx[j],k,Bl_idx[i],El_idx[j],Az_idx[j]] += 1
+    cstep = 128
+    cblocks = (4096 + cstep - 1) // cstep
+    for cblock in prange(cblocks):
+        c_start = cblock * cstep
+        c_end = min(4096, c_start + cstep)
+        for k in range(c_start, c_end):
+            for i in range(len(Bl_idx)):
+                for j in range(len(Time_idx)):
+                    Master[Time_idx[j],k,Bl_idx[i],El_idx[j],Az_idx[j]] += Good_flags[j,k,i]
+                    Counter[Time_idx[j],k,Bl_idx[i],El_idx[j],Az_idx[j]] += 1
                 
-    print('Master array has been updated')
             
     return Master, Counter
 
 
 
-if __name__=='__main__':
-    parser = argparse.ArgumentParser( description='give path to the files',)
+if __name__=="__main__":
+    parser = argparse.ArgumentParser(description='This package produces two 5-D arrays, which are the counter array and the master array. The arrays provides statistics about measured RFI from MeerKAT telescope.',)
    
     parser.add_argument('-v',
                         '--vis', action='store',  type=str,
@@ -269,18 +286,21 @@ if __name__=='__main__':
                         '--bad', action='store',  type=str,
                     help='Path to save list of bad files')
     parser.add_argument('-g',
-                        '--good', action='store', type=str,
+                        '--good', action='store', type=str,default = '\tmp',
                     help='Path to save bad files')
     parser.add_argument('-z',
-                        '--zarr', action='store', type=str,
+                        '--zarr', action='store', type=str,default = '\tmp',
                     help='path to save output zarr file')
+    parser.add_argument('-n','--no_of_files', action = 'store', type=int,
+                        help='Multiple of number of files to save a number between 1 and 10',default=1 )
     
     args = parser.parse_args()
 
     
     #Getting the file names
     flag,f = get_files(args.flags,args.vis)
-     
+    
+    #f = f[4:]
     #Initializing the master array and the weghting
     master = np.zeros((24,4096,2016,8,24), dtype=np.uint16) 
     counter =np.zeros((24,4096,2016,8,24), dtype=np.uint16) 
@@ -293,60 +313,70 @@ if __name__=='__main__':
         print('Adding file {} : {}'.format(i, f[i]))
         try:
             pathfullvis=str(args.vis)+'/'+f[i]
-            print pathfullvis
-            pathflag = str(args.flags)+'/'+flag[i]
-            fullvis, flagfile = readfile(pathfullvis, pathflag)
+            pathflag = str(args.flags)+flag[i]
+            fullvis,flagfile = readfile(pathfullvis,pathflag)
             print('File ',i,'has been read')
-        except:
-              pass
-        
-        
-        if len(fullvis.freqs) == 4096:
-            clean_ants = remove_bad_ants(fullvis)
-            print('good ants')
-            good_flags = select_and_apply_with_good_ants(fullvis, flagfile, pol_to_use='HH', corrprod='cross', scan='track', 
-                                                         clean_ants=clean_ants).astype(int)
-          
-            if good_flags.shape[0]* good_flags.shape[1]* good_flags.shape[2]!= 0:
-                
-                good_flags = np.transpose(good_flags, axes=[2,0,1])
-                good_flags = good_flags.compute()
-                print('Good flags')
-                el,az = get_az_and_el(fullvis)
-                time_idx = get_time_idx(fullvis)
-                az_idx = get_az_idx(az,np.arange(0,370,15))
-                el_idx = get_el_idx(el,np.arange(10,90,10))
-                print('el and az extracted')
-                corr_prods = get_corrprods(fullvis)
-                bl_idx = get_bl_idx(corr_prods, nant=64)
-                # Updating the array
-                s = tme.time()
-     
-                master, counter = update_arrays(time_idx, bl_idx, el_idx, az_idx, good_flags, master, counter)
 
-                print(tme.time() - s)
-                goodfiles.append(f[i])
-                
-            else:
-                print(f[i],'selection has a problem')
-                badfiles.append(f[i])
-                pass
-             
-                   
-        else:
-            print(f[i],'channel has a problem')
-            badfiles.append(f[i])
-            pass
-        
-        
-        if i%10==0 and i!=0:
-        
-            ds = xr.Dataset({'master': (('time','frequency','baseline','elevation','azimuth') , master),
+            if len(fullvis.freqs) == 4096 and fullvis.dump_period>7 and fullvis.dump_period<8:
+                clean_ants = remove_bad_ants(fullvis)
+                print('good ants')
+                good_flags = select_and_apply_with_good_ants(fullvis, flagfile, pol_to_use='HH', corrprod='cross', scan='track',
+                                                         clean_ants=clean_ants)
+                print('Good flags')
+                if good_flags.shape[0]* good_flags.shape[1]* good_flags.shape[2]!= 0:
+
+                    el,az = get_az_and_el(fullvis)
+                    time_idx = get_time_idx(fullvis)
+                    az_idx = get_az_idx(az,np.arange(0,370,15))
+                    el_idx = get_el_idx(el,np.arange(10,90,10))
+                    print('el and az extracted')
+                    corr_prods = get_corrprods(fullvis)
+                    bl_idx = get_bl_idx(corr_prods, nant=64)
+                    # Updating the array
+                    s = tme.time()
+                    ntime = good_flags.shape[0]
+                    time_step = 5
+                    for tm in six.moves.range(0, ntime, time_step):
+                        time_slice=slice(tm, tm + time_step)
+                        flag_chunk = good_flags[time_slice].astype(int)
+                        tm_chunk = time_idx[time_slice]
+                        el_chunk = el_idx[time_slice]
+                        az_chunk = az_idx[time_slice]
+                        master, counter = update_arrays(tm_chunk, bl_idx, el_chunk, az_chunk, flag_chunk, master, counter)
+
+                    print(tme.time() - s)
+                    goodfiles.append(f[i])
+
+                    if i%args.no_of_files==0:
+
+                        ds = xr.Dataset({'master': (('time','frequency','baseline','elevation','azimuth') , master),
                              'counter': (('time','frequency','baseline','elevation','azimuth'), counter)},
                             {'time': np.arange(24),'frequency':fullvis.freqs,'baseline':np.arange(2016),
                              'elevation':np.linspace(10,80,8),'azimuth':np.arange(0,360,15)})
 
-            ds.to_zarr(args.zarr,'w')
-            np.save(args.good,goodfiles)
-            np.save(args.bad,badfiles)
-       
+                        ds.to_zarr(args.zarr,'w')
+                        np.save(args.good,goodfiles)
+                        np.save(args.bad,badfiles)
+                        print('File has been saved')
+
+
+                else:
+                    print(f[i],'selection has a problem')
+                    badfiles.append(f[i])
+                    pass
+
+
+            else:
+                print(f[i],'channel has a problem')
+                badfiles.append(f[i])
+                pass
+
+
+
+        except Exception as e:
+            print(e)
+            continue
+    
+
+
+
