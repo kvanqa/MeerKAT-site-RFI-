@@ -36,6 +36,7 @@ def readfile(FullvisFile, pathflag, tokenPresent):
      
 def remove_bad_ants(fullvis):
     print("*** Function: remove_bad_ants")
+
     '''
     This function is going to extrcat the list of all goos antennas.
     
@@ -61,7 +62,7 @@ def remove_bad_ants(fullvis):
             AntList.remove(AntsActivity[i][0])
         else:
             pass
-    
+    print(len(AntList))
     return AntList
 
 def select_and_apply_with_good_ants(fullvis,tokenPresent, pol_to_use, corrprod,scan,clean_ants):
@@ -77,7 +78,9 @@ def select_and_apply_with_good_ants(fullvis,tokenPresent, pol_to_use, corrprod,s
     '''
 
     fullvis.select(reset='TFB')
+
     print("tokenPresent", tokenPresent)
+    
     if tokenPresent.lower() == 'n':
         flags = da.from_array(flagfile['flags'], chunks=(1, 342, fullvis.shape[2]))
         fullvis.source.data.flags = flags
@@ -303,7 +306,7 @@ def get_files(path2flags, path2full,flagsPresent):
 
 @jit(nopython=True, parallel=True)
 def update_arrays(Time_idx, Bl_idx, El_idx, Az_idx, Good_flags, Master, Counter):
-    print("*** Function: Updateing array function")
+    print("*** Function: Update_arrays function")
     '''
     This function is gonna update the master and counter array
     
@@ -321,7 +324,7 @@ def update_arrays(Time_idx, Bl_idx, El_idx, Az_idx, Good_flags, Master, Counter)
                 for j in range(len(Time_idx)):
                     Master[Time_idx[j],k,Bl_idx[i],El_idx[j],Az_idx[j]] += Good_flags[j,k,i]
                     Counter[Time_idx[j],k,Bl_idx[i],El_idx[j],Az_idx[j]] += 1
-                    
+    
     return Master, Counter
 
 
@@ -354,8 +357,10 @@ if __name__=="__main__":
     args = parser.parse_args()
 
     print("Starting now ....")
+    #
     #Getting the file names
-    
+    #
+
     f = get_token_files(args.vis,args.tokenPresent)
 
     # 
@@ -369,10 +374,10 @@ if __name__=="__main__":
     badfiles = []
     goodfiles = []
     
-    for i in np.arange(len(f)):
-        
-        print('Adding file {} : {}'.format(i, f[i][:26]))
-        if f[i].split('/')[0] == 'https:':
+    for i in range(len(f)):
+
+        print('Adding file {} : {}'.format(i, f[i].split(':7480/')[1].split('/')[1]))
+        if (f[i].split('/')[0] == 'http:') or (f[i].split('/')[0] == 'https:'):
             tokenPresent = 'y'
             try:
                 print("Reading tokenize file")
@@ -401,30 +406,39 @@ if __name__=="__main__":
             print('good ants done...')
             
             #good_flags = select_and_apply_with_good_ants(fullvis, flagfile, MyFlag, pol_to_use='HH', corrprod='cross', scan='track', clean_ants=clean_ants)
+            
             good_flags = select_and_apply_with_good_ants(fullvis, tokenPresent, pol_to_use='HH', corrprod='cross', scan='track', clean_ants=clean_ants)
             print('Good flags done ..')
-          
+
             if good_flags.shape[0]* good_flags.shape[1]* good_flags.shape[2]!= 0:
                 
                 el,az = get_az_and_el(fullvis)
                 time_idx = get_time_idx(fullvis)
                 az_idx = get_az_idx(az,np.arange(0,370,15))
                 el_idx = get_el_idx(el,np.arange(10,90,10))
+                #
                 print('el and az extracted')
+                #
                 corr_prods = get_corrprods(fullvis)
                 bl_idx = get_bl_idx(corr_prods, nant=64)
+                #
                 # Updating the array
+                #
                 s = tme.time()
                 ntime = good_flags.shape[0]
                 time_step = 8
-                for tm in six.moves.range(0, ntime, time_step):
+                
+                for tm in range(0, ntime, time_step):
+                #for tm in six.moves.range(0, ntime, time_step):
+
                     time_slice=slice(tm, tm + time_step)
                     flag_chunk = good_flags[time_slice].astype(int)
                     tm_chunk = time_idx[time_slice]
                     el_chunk = el_idx[time_slice]
                     az_chunk = az_idx[time_slice]
-                    master, counter = update_arrays(tm_chunk, bl_idx, el_chunk, az_chunk, flag_chunk, master, counter)
-
+                    master, counter = update_arrays(tm_chunk, bl_idx, el_chunk, az_chunk, flag_chunk,
+                                                    master, counter)
+                    
                 print(tme.time() - s)
                 goodfiles.append(f[i])
                 
