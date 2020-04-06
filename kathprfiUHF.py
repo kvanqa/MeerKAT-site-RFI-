@@ -427,18 +427,19 @@ if __name__=="__main__":
                 s = tme.time()
                 ntime = good_flags.shape[0]
                 time_step = 8
-                
+                print("ntime = ",ntime)
                 for tm in range(0, ntime, time_step):
                 #for tm in six.moves.range(0, ntime, time_step):
 
                     time_slice=slice(tm, tm + time_step)
+                    print("time_slice= ", time_slice) 
                     flag_chunk = good_flags[time_slice].astype(int)
                     tm_chunk = time_idx[time_slice]
                     el_chunk = el_idx[time_slice]
                     az_chunk = az_idx[time_slice]
+                    print(tm_chunk.shape, bl_idx.shape, el_chunk.shape, az_chunk.shape, flag_chunk.shape)
                     master, counter = update_arrays(tm_chunk, bl_idx, el_chunk, az_chunk, flag_chunk,
                                                     master, counter)
-                    
                 print(tme.time() - s)
                 goodfiles.append(f[i])
                 

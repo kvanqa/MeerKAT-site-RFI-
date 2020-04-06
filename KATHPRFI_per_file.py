@@ -13,6 +13,8 @@ from dask import delayed
 from numba import jit, prange
 import argparse,os
 import six
+import psutil
+from pathlib import Path
 
 
 
@@ -78,7 +80,7 @@ def select_and_apply_with_good_ants(fullvis,flagfile, pol_to_use, corrprod,scan,
     
     fullvis.source.data.flags = flags
     
-    fullvis.select(corrprods=corrprod, pol=pol_to_use, scans=scan,ants = clean_ants,flags=['cal_rfi','ingest_rfi'])
+    fullvis.select(corrprods=corrprod, pol=pol_to_use, scans=scan,ants = clean_ants,flags=['cal_rfi'])
 
     flag =fullvis.flags  
   
@@ -122,7 +124,11 @@ def get_time_idx(fullvis):
     # Converting time to hour of a day
     hour = []
     for i in range(len(local_time)):
-        hour.append(int(round(int(local_time[i][:2]) + int(local_time[i][3:5])/60 + float(local_time[i][-2:])/3600)))
+        h = int(round(int(local_time[i][:2]) + int(local_time[i][3:5])/60 + float(local_time[i][-2:])/3600))
+        if h == 24:
+            hour.append(0)
+        else:
+            hour.append(h)
     return np.array(hour, dtype=np.int32)
 
 
@@ -211,28 +217,23 @@ def get_files(path2flags, path2full):
     
     Ouput: List of flagfiles and fullvis names.
     '''
+    path = [path2flags, path2full]
     import os, fnmatch
-
-    if flagsPresent:
-        path = [path2flags, path2full]
-        listOfflags = os.listdir(path[0])  
-        patternflags = "*.h5"   
-        dataflags = []
-        for entry in listOfflags:
-            if fnmatch.fnmatch(entry,patternflags):
-                dataflags.append(entry[0:10])
-        data = list(set(datafull).intersection(set(dataflags)))
-        
-    else:
-   
-        path = [path2full]
-        listOffull = os.listdir(path[1]) 
-        patternfull = "*.rdb"      
-        datafull =[]
+    listOfflags = os.listdir(path[0])  
     
-        for entry in listOffull:  
-            datafull.append(entry[0:10])
-            data = list(set(datafull).intersection(set(dataflags)))
+    listOffull = os.listdir(path[1]) 
+    
+    patternflags = "*.h5"   
+    patternfull = "*.rdb" 
+    dataflags = []
+    datafull =[]
+    for entry in listOffull:  
+        datafull.append(entry[0:10])
+    for entry in listOfflags:  
+         if fnmatch.fnmatch(entry,patternflags):
+            dataflags.append(entry[0:10])
+            
+    data = list(set(datafull).intersection(set(dataflags)))
     
     fullvis = []
     flags = []
@@ -294,79 +295,99 @@ if __name__=="__main__":
     
     #Getting the file names
     flag,f = get_files(args.flags,args.vis)
-    
-     
+    #f =['1527542514_sdp_l0.full.rdb'] #np.load('/data/isaac/DR0/flags_2b_processed.npy')
+    #flag =['1527542514_sdp_l0_flags.h5'] #np.load('/data/isaac/DR0/toB_proccessed.npy')
+    #flag = flag[1:]
+    #f = f[1:]
     #Initializing the master array and the weghting
-    master = np.zeros((24,4096,2016,8,24), dtype=np.uint16) 
-    counter =np.zeros((24,4096,2016,8,24), dtype=np.uint16) 
+    
+    #data =  xr.open_zarr('/home/isaac/DR01_tom.zarr/')
+    #master = data.master.compute().values
+    #counter = data.counter.compute().values
+    
+
  
     # Running the Hp code
     badfiles = []
     goodfiles = []
-    
+     
     for i in range(len(f)):
+        master = np.zeros((24,4096,2016,8,24), dtype=np.uint16) 
+        counter =np.zeros((24,4096,2016,8,24), dtype=np.uint16)
+        s = tme.time()
         print('Adding file {} : {}'.format(i, f[i]))
         try:
             pathfullvis=str(args.vis)+'/'+f[i]
-            pathflag = str(args.flags)+flag[i]
+            pathflag = str(args.flags)+'/'+flag[i]
             fullvis,flagfile = readfile(pathfullvis,pathflag)
             print('File ',i,'has been read')
-        except Exception as e:
-            print e
-            continue
-     
-        if len(fullvis.freqs) == 4096:
-            clean_ants = remove_bad_ants(fullvis)
-            print('good ants')
-            good_flags = select_and_apply_with_good_ants(fullvis, flagfile, pol_to_use='HH', corrprod='cross', scan='track', 
-                                                         clean_ants=clean_ants)
-            print('Good flags')
-          
-            if good_flags.shape[0]* good_flags.shape[1]* good_flags.shape[2]!= 0:
-                
-                el,az = get_az_and_el(fullvis)
-                time_idx = get_time_idx(fullvis)
-                az_idx = get_az_idx(az,np.arange(0,370,15))
-                el_idx = get_el_idx(el,np.arange(10,90,10))
-                print('el and az extracted')
-                corr_prods = get_corrprods(fullvis)
-                bl_idx = get_bl_idx(corr_prods, nant=64)
-                # Updating the array
-                s = tme.time()
-                ntime = good_flags.shape[0]
-                time_step = 8
-                for tm in six.moves.range(0, ntime, time_step):
-                    time_slice=slice(tm, tm + time_step)
-                    flag_chunk = good_flags[time_slice].astype(int)
-                    tm_chunk = time_idx[time_slice]
-                    el_chunk = el_idx[time_slice]
-                    az_chunk = az_idx[time_slice]
-                    master, counter = update_arrays(tm_chunk, bl_idx, el_chunk, az_chunk, flag_chunk, master, counter)
 
-                print(tme.time() - s)
-                goodfiles.append(f[i])
-                
+            if len(fullvis.freqs) == 4096 and fullvis.dump_period>7 and fullvis.dump_period<8:
+                clean_ants = remove_bad_ants(fullvis)
+                print('good ants')
+                good_flags = select_and_apply_with_good_ants(fullvis, flagfile, pol_to_use='HH', corrprod='cross', scan='track',clean_ants=clean_ants)
+                print('Good flags')
+                if good_flags.shape[0]* good_flags.shape[1]* good_flags.shape[2]!= 0:
+
+
+                    el,az = get_az_and_el(fullvis)
+                    time_idx = get_time_idx(fullvis)
+                    az_idx = get_az_idx(az,np.arange(0,370,15))
+                    el_idx = get_el_idx(el,np.arange(10,90,10))
+                    print('el and az extracted')
+                    corr_prods = get_corrprods(fullvis)
+                    bl_idx = get_bl_idx(corr_prods, nant=64)
+                    print('Corr prods and baseline index has been extracted')
+                    # Updating the array
+                    ntime = good_flags.shape[0]
+                    time_step = 500 
+                    if ntime <= time_step:
+                        time_step = ntime
+                    for tm in six.moves.range(0, ntime, time_step):
+
+
+                        time_slice=slice(tm, tm + time_step)
+                        flag_chunk = good_flags[time_slice].astype(int)
+                        AvailableMem = (psutil.virtual_memory().available)/(1024*1024*1024) # in GB
+                        MemRequired =flag_chunk.nbytes/(1024*1024*1024)
+                        print('Available memory {} Required memory {}'.format(AvailableMem,MemRequired))
+                        tm_chunk = time_idx[time_slice]
+                        el_chunk = el_idx[time_slice]
+                        az_chunk = az_idx[time_slice]
+                        master, counter = update_arrays(tm_chunk, bl_idx, el_chunk, az_chunk, flag_chunk, master, counter)
+
+                    print(tme.time() - s)
+                    goodfiles.append(f[i])
+
+
+
+                    if i%args.no_of_files==0:
+                        print('Creating Dataset')
+                        ds = xr.Dataset({'master': (('time','frequency','baseline','elevation','azimuth') , master),
+                       'counter': (('time','frequency','baseline','elevation','azimuth'), counter)},
+                       {'time': np.arange(24),'frequency':fullvis.freqs,'baseline':np.arange(2016),
+                       'elevation':np.linspace(10,80,8),'azimuth':np.arange(0,360,15)})
+                        print('Saving dataset')
+                        ds.to_zarr(args.zarr+str(f[i]),'w')
+                        print('Dataset has been saved')
+
+                else:
+                    print(f[i],'selection has a problem')
+                    badfiles.append(f[i])
+                    pass
+
+
             else:
-                print(f[i],'selection has a problem')
+                print(f[i],'channel/dump has a problem')
                 badfiles.append(f[i])
                 pass
-             
-                   
-        else:
-            print(f[i],'channel has a problem')
-            badfiles.append(f[i])
-            pass
-        
-        
-        if i%args.no_of_files==0:
-        
-            ds = xr.Dataset({'master': (('time','frequency','baseline','elevation','azimuth') , master),
-                             'counter': (('time','frequency','baseline','elevation','azimuth'), counter)},
-                            {'time': np.arange(24),'frequency':fullvis.freqs,'baseline':np.arange(2016),
-                             'elevation':np.linspace(10,80,8),'azimuth':np.arange(0,360,15)})
 
-            ds.to_zarr(args.zarr,'w')
+
+
             np.save(args.good,goodfiles)
             np.save(args.bad,badfiles)
             print('File has been saved')
 
+        except Exception as e:
+            print(e)
+            continue
