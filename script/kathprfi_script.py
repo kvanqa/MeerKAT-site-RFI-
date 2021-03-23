@@ -25,6 +25,8 @@ def create_parser():
                                                  'RFI from MeerKAT telescope.')
     parser.add_argument('-c', '--config', action='store', type=str,
                        help='A config file that does subselction of data')
+    parser.add_argument('-v', '--vis', action='store',  type=str,
+                        help='Path to the csv file that cointains links to rdb files')
     parser.add_argument('-b', '--bad', action='store',  type=str,
                         help='Path to save list of bad files')
     parser.add_argument('-g', '--good', action='store', type=str, default='\tmp',
@@ -40,6 +42,7 @@ def main():
     logging.info('MEERKAT HISTORICAL PROBABILITY OF RADIO FREQUENCY INTERFERENCE FRAMEWORK.')
     parser = create_parser()
     args = parser.parse_args()
+<<<<<<< HEAD
     path2config = os.path.abspath(args.config)
     # Read in dictionary with keys and values from config file
     config = kathp.config2dic(path2config)
@@ -60,24 +63,43 @@ def main():
     # Read in csv file with files to process
     data = pd.read_csv(filename)
     f = data[name_col].values
+=======
+    path = os.path.abspath(args.vis)
+    data = pd.read_csv(path)
+    f = data['FullLink'].values
+>>>>>>> master
     badfiles = []
     goodfiles = []
     for i in range(len(f)):
         # Initializing 5-D arrays
+<<<<<<< HEAD
         master = np.zeros((24, freq_chan, 2016, 8, 24), dtype=np.uint16)
         counter = np.zeros((24, freq_chan, 2016, 8, 24), dtype=np.uint16)
+=======
+        master = np.zeros((24, 4096, 2016, 8, 24), dtype=np.uint16)
+        counter = np.zeros((24, 4096, 2016, 8, 24), dtype=np.uint16)
+>>>>>>> master
         s = tme.time()
         logging.info('Adding file {} : {}'.format(i, f[i]))
         try:
             pathvis = f[i]
             vis = kathp.readfile(pathvis)
             logging.info('File number {} has been read'.format(i))
+<<<<<<< HEAD
             if len(vis.freqs) == freq_chan and vis.dump_period > dump_rate-1 and vis.dump_period <= dump_rate:
                 logging.info('Removing bad antennas')
                 clean_ants = kathp.remove_bad_ants(vis)
                 logging.info('Bad antennas has been removed.')
                 good_flags = kathp.selection(vis, pol_to_use=pol, corrprod=corrpro, scan=scans,
                                              clean_ants=clean_ants, flag_type=flags)
+=======
+            if len(vis.freqs) == 4096 and vis.dump_period > 7 and vis.dump_period <= 8:
+                logging.info('Removing bad antennas')
+                clean_ants = kathp.remove_bad_ants(vis)
+                logging.info('Bad antennas has been removed.')
+                good_flags = kathp.selection(vis, pol_to_use='HH', corrprod='cross', scan='track',
+                                             clean_ants=clean_ants, flag_type=['cal_rfi', 'ingest_rfi'])
+>>>>>>> master
                 logging.info('Good flags has been returned')
                 if good_flags.shape[0] * good_flags.shape[1] * good_flags.shape[2] != 0:
                     # create azimuth and elevation bins
