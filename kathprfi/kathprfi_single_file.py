@@ -25,6 +25,40 @@ def readfile(path):
     return vis
 
 
+def config2dic(filepath):
+    """
+    Read a configuration file which will be passed into
+    a new object instance.
+
+    Parameters:
+    ----------
+    filepath : string
+        The absolute filepath of the config file.
+  
+    Returns:
+    --------
+    args_dict : dict
+        A dictionary of arguments, to be passed into some function,
+        usually the katdal object instance.
+   """
+
+    #open file and read contents
+    config_file = open(filepath)
+    txt = config_file.read()
+    args_dict = {}
+
+    #set up dictionary of arguments based on their types
+    for line in txt.split('\n'):
+        if len(line) > 0 and line.replace(' ','')[0] != '#':
+            #use '=' as delimiter and strip whitespace
+            split = line.split('=')
+            key = split[0].strip()
+            val = split[1].strip()
+            args_dict.update({key : val})
+    config_file.close()
+    return args_dict
+
+
 def remove_bad_ants(vis):
     """
     Extract good antennas by checking antenna activity list.
