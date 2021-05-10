@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 from numba import jit
 from numba import prange
+from skimage.measure import block_reduce
+
 
 
 def readfile(path):
@@ -120,6 +122,26 @@ def selection(vis, pol_to_use, corrprod, scan, clean_ants, flag_type):
                flags=flag_type)
     flag = vis.flags
     return flag
+
+def NewFlagChunk(flag_chunk):
+    """
+    Reduce 32k flag array to 4k flag array.
+    
+    NB: If any of the averaged samples is TRUE then
+        the average becomes true.
+    
+    Paramaters:
+    -----------
+    flag : numpy array
+        flags array
+        
+    Returns:
+    --------
+    output : numpy array
+        average numpy array
+    """
+    averaged_chunk = block_reduce(flag_chunk, block_size=(1, 8, 1), func=np.any)
+    return averaged_chunk 
 
 
 def get_az_and_el(vis):
@@ -267,7 +289,7 @@ def get_bl_idx(vis, nant):
 
 
 @jit(nopython=True, parallel=True)
-def update_arrays(vis, time_slice, azbins, elbins, nant, Good_flags, Master, Counter):
+def update_arrays(Time_idx, Bl_idx, El_idx, Az_idx, Good_flags, Master, Counter):
     """
     Update the master and counter array
 
@@ -279,8 +301,6 @@ def update_arrays(vis, time_slice, azbins, elbins, nant, Good_flags, Master, Cou
         array of azimuthal bins
     elbins : numpy array
         array of elevation bins
-    nant : int
-       number of antennas
     Good_flags : katdal.lazy_indexer.DaskLazyIndexer
         sub selected katdal lazy indexer of RFI flags
     Master : numpy array
@@ -293,11 +313,7 @@ def update_arrays(vis, time_slice, azbins, elbins, nant, Good_flags, Master, Cou
     output : numpy array
       updated master and counter array
     """
-    Time_idx = get_time_idx(vis)[time_slice]
-    Bl_idx = get_bl_idx(vis, nant)
-    el, az = get_az_and_el(vis)
-    El_idx = get_el_idx(el, elbins)[time_slice]
-    Az_idx = get_az_idx(az, azbins)[time_slice]
+   
     cstep = 128
     cblocks = (4096 + cstep - 1) // cstep
     for cblock in prange(cblocks):
