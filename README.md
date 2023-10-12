@@ -19,4 +19,4 @@ Katdal library is used to open and manipualte the rdb files produced by MeerKAT 
 
 ## Run the module
 
-python kathprfi.py -c path_to_config_file -f -z path/to/save/zarr_array/zarr_array_name.zarr -b path2save/badfiles/filename.npy -g path2save/goodfiles/goodfiles.npy
+python kathprfi.py -c path_to_config_file -z path/to/save/zarr_array/zarr_array_name.zarr -b path2save/badfiles/filename.npy -g path2save/goodfiles/goodfiles.npy
