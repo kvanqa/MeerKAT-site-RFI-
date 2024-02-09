@@ -9,7 +9,7 @@ import time as tme
 import numpy as np
 import pandas as pd
 import xarray as xr
-
+import zarr
 import kathprfi_single_file as kathp
 
 
@@ -25,14 +25,19 @@ def create_parser():
                                                  'which are the counter array and the master array.'
                                                  'The arrays provides statistics about measured'
                                                  'RFI from MeerKAT telescope.')
-    parser.add_argument('-c', '--config', action='store', type=str,
-                       help='A config file that does subselction of data')
+    #define the default values for the configuration
+    #DEFAULT_CONFIG_FILE = "kathprfi_config.txt"
+    DEFAULT_OUTPUT_DIR  = "/scratch/kvanqa/RFI_work/KATHPRFI/OUT_ZARR/UFH_HH_.zarr"
+
+    #parser.add_argument('-c', '--config', action='store', type=str,default=DEFAULT_CONFIG_FILE,
+    #                   help='A config file that does subselction of data')
     parser.add_argument('-b', '--bad', action='store',  type=str,
                         help='Path to save list of bad files')
     parser.add_argument('-g', '--good', action='store', type=str, default='\tmp',
                         help='Path to save bad files')
-    parser.add_argument('-z', '--zarr', action='store', type=str, default='\tmp',
+    parser.add_argument('-z', '--zarr', action='store', type=str, default=DEFAULT_OUTPUT_DIR,
                         help='path to save output zarr file')
+
     return parser
 
 
@@ -42,9 +47,23 @@ def main():
     logging.info('MEERKAT HISTORICAL PROBABILITY OF RADIO FREQUENCY INTERFERENCE FRAMEWORK')
     parser = create_parser()
     args = parser.parse_args()
-    path2config = os.path.abspath(args.config)
-    # Read in dictionary with keys and values from config file
-    config = kathp.config2dic(path2config)
+    #path2config = os.path.abspath(args.config)
+ 
+    #config = kathp.config2dic(path2config)
+    # Configuration dictionary directly in the script
+    band = 'u'  # specify the band (u, l, or s)
+    pol_to_use = 'HH'
+    #output_filename = f"{band}_{pol_to_use}
+    config = {
+        'filename': '/scratch/kvanqa/RFI_work/sci_Imaging_U_2023-12-01_2023-12-31.csv',
+        'name_col': 'FullLink',
+        'corrprod': 'cross',
+        'scan': 'track',
+        'flag_type': 'cal_rfi',
+        'pol_to_use': pol_to_use,
+        'correlator_mode': '4k',
+        'dump_period': '8'
+    }
     # Get values from the dictionary
     filename = config['filename']
     name_col = config['name_col']
@@ -74,7 +93,7 @@ def main():
             vis = kathp.readfile(pathvis)
             logging.info('File number {} has been read'.format(i))
             
-            if len(vis.freqs) == freq_chan and vis.dump_period > (dump_rate-1) and vis.dump_period <= dump_rate:
+            if len(vis.freqs) == freq_chan and vis.dump_period > (dump_rate-1) and vis.dump_period <= dump_rate and vis.vis.shape[0]>0 and vis.flags.shape[0] > 0 and len(vis.flags.shape) == 3 and np.where(vis.flags[:,:,0] == False)[0].shape:
                 logging.info('Removing bad antennas')
                 clean_ants = kathp.remove_bad_ants(vis)
                 logging.info('Bad antennas has been removed.')
